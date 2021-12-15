@@ -466,7 +466,6 @@ def packet_callback(packet):
                             pub_update[root[1][1][0][0].text] = addr
 
                 if root[0].text == "requestTopic":
-                    print("hey")
                     if "TCPROS" in load:
                         if root[1][1][0][0].text in pub_update.keys():
                             addr = pub_update.get(root[1][1][0][0].text)
@@ -486,7 +485,6 @@ def packet_callback(packet):
                                         PID_list = "UNKNOWN"
                                     else:
                                         command = 'fuser -k ' + str(port) + '/tcp'
-                                        print(command)
                                         stream = os.popen(command)
                                         # output = stream.read()
                                         # print(output)
