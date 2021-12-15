@@ -10,7 +10,10 @@ from datetime import datetime
 import os
 from os.path import exists
 
-
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.connect(("8.8.8.8", 80))
+wifi = s.getsockname()[0]
+host_name = socket.gethostname()
 
 # s = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.IPPROTO_TCP)
 
@@ -25,15 +28,23 @@ lookup_node = {}
 lookup_service = {}
 node = {}
 param_names = {}
+pub_update = {}
 toggle = True
 toggle2 = True
 toggle3 = True
+toggle4 = True
 
 # counter = 0
 
-
 file1 = open("ROS-Guardian_log.txt", "w")  # append mode
 file1.close()
+
+def get_key(val, dict):
+    for key, value in dict.items():
+         if val == value:
+             return key
+ 
+    return "key doesn't exist"
 
 def unusual_actvt(packet, key, root, n_name):
     global topics, sys_state, topic_type, lookup_node, lookup_service, node
@@ -105,17 +116,20 @@ def unusual_actvt(packet, key, root, n_name):
         file1.close()
 
 def packet_callback(packet):
-    global topics, file1, toggle, toggle2, toggle3
+    global topics, file1, toggle, toggle2, toggle3, toggle4
     if packet[TCP].payload:
         load = str(bytes(packet[TCP].payload))
-
+        # print(load)
         if packet[IP].dport == 11311:
             # load = str(bytes(packet[TCP].payload))
-            if "<?xml version=\'1.0\'?>" in load:
+            if ("<?xml version=\'1.0\'?>" in load) or ("<?xml version=\"1.0\"?>" in load):
                 # packet.show()
                 # print(packet[IP].sport)
                 # print(load)
-                xml = re.search('<\?xml version=\'1.0\'\?>[\s\S]*?<\/methodCall>', load).group(0)
+                try:
+                    xml = re.search('<\?xml version=\'1.0\'\?>[\s\S]*?<\/methodCall>', load).group(0)
+                except:
+                    xml = re.search('<\?xml version=\"1.0\"\?>[\s\S]*?<\/methodCall>', load).group(0)
                 root = ET.fromstring(xml)
                 if root[0].text == "registerPublisher":
                     key = (root[1][1][0][0].text, "pub")
@@ -423,9 +437,13 @@ def packet_callback(packet):
                                                 #restore state of topic
                                                 del topics[key]
 
-        if "<?xml version=\'1.0\'?>" in load:
+        if (("<?xml version=\'1.0\'?>" in load) or ("<?xml version=\"1.0\"?>" in load)) and packet[IP].dport != 11311:
+
             try:
-                xml = re.search('<\?xml version=\'1.0\'\?>[\s\S]*?<\/methodCall>', load).group(0)
+                try:
+                    xml = re.search('<\?xml version=\'1.0\'\?>[\s\S]*?<\/methodCall>', load).group(0)
+                except:
+                    xml = re.search('<\?xml version=\"1.0\"\?>[\s\S]*?<\/methodCall>', load).group(0)
                 root = ET.fromstring(xml)
                 if root[0].text == "shutdown":
                     if toggle:
@@ -438,7 +456,65 @@ def packet_callback(packet):
                         toggle = False
                     else:
                         toggle = True
+                
+                if root[0].text == "publisherUpdate":
+                    ip = str(wifi)
+                    if ip in load:
+                        if ip in root[1][2][0][0][0][0][0].text:
+                            topic = root[1][1][0][0].text
+                            addr = root[1][2][0][0][0][0][0].text
+                            pub_update[root[1][1][0][0].text] = addr
 
+                if root[0].text == "requestTopic":
+                    print("hey")
+                    if "TCPROS" in load:
+                        if root[1][1][0][0].text in pub_update.keys():
+                            addr = pub_update.get(root[1][1][0][0].text)
+                            dst = str(packet[IP].dport)
+                            if dst in addr:
+                                if toggle4:
+                                    PID_list = []
+                                    port = get_key(None, sys_state)
+                                    stream = os.popen('fuser ' + str(port) + '/tcp')
+                                    output = stream.read()
+                                    if output == '':
+                                        pass
+                                    else:
+                                        PID = output
+                                        PID_list.append(PID)
+                                    if not PID_list:
+                                        PID_list = "UNKNOWN"
+                                    else:
+                                        command = 'fuser -k ' + str(port) + '/tcp'
+                                        print(command)
+                                        stream = os.popen(command)
+                                        # output = stream.read()
+                                        # print(output)
+
+                                    topic = root[1][1][0][0].text
+                                    node_name = "Unknown"
+
+                                    now = datetime.now()
+                                    current_time = now.strftime("%H:%M:%S")
+                                    n_name = root[1][0][0][0].text
+
+                                    l1 = "Unusual Activity Detected:" + "\n"
+                                    l2 = "    Action: publisherUpdate" + "\n"
+                                    l3 = "    Target topic: " + topic + "\n"
+                                    l4 = "    Victim subscriber: " + n_name + "\n"
+                                    l5 = "    Time: " + current_time + "\n"
+                                    l6 = "    Malicious node: " + node_name + "\n"
+                                    l7 = "    Related ports: " + str(port) + "\n"
+                                    l8 = "    Related PIDs: " + str(PID_list) + "\n"
+
+                                    print(l1 + l2 + l3 + l4 + l5 + l6 + l7 + l8)
+                                    file1 = open("ROS-Guardian_log.txt", "a")
+                                    L = [l1, l2, l3, l4, l5, l6, l7, l8]
+                                    file1.writelines(L)
+                                    file1.close()
+                                    toggle4 = False
+                                else:
+                                    toggle4 = True
             except:
                 pass
 sniff(filter='tcp', iface="lo", prn=packet_callback, store=0, count=0)
